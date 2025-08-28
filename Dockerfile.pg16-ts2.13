@@ -1,23 +1,54 @@
+# Base: TimescaleDB HA image (PG16 + TS 2.13)
 FROM timescale/timescaledb-ha:pg16-ts2.13
 
-# Switch to root user for apt operations
+# ---- Root to install packages and place scripts
 USER root
 
-# Install OpenSSL and sudo
-RUN apt-get update && apt-get install -y openssl sudo
+# Install OpenSSL (your script needs it) + pgvector (and optional PostGIS)
+# If the pgvector package isn't found on this base, use the "source build" block below instead.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      openssl sudo \
+      postgresql-16-pgvector \
+      postgresql-16-postgis-3 postgresql-16-postgis-3-scripts \
+ && rm -rf /var/lib/apt/lists/*
 
-# Allow the postgres user to execute certain commands as root without a password
-RUN echo "postgres ALL=(root) NOPASSWD: /usr/bin/mkdir, /bin/chown, /usr/bin/openssl" > /etc/sudoers.d/postgres
+# Fallback: build pgvector from source (UNCOMMENT if the apt package isn't available)
+# RUN apt-get update \
+#  && apt-get install -y --no-install-recommends \
+#       openssl sudo \
+#       build-essential ca-certificates git postgresql-server-dev-16 \
+#  && git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+#  && make -C /tmp/pgvector \
+#  && make -C /tmp/pgvector install \
+#  && rm -rf /tmp/pgvector \
+#  && apt-get purge -y --auto-remove build-essential git postgresql-server-dev-16 \
+#  && rm -rf /var/lib/apt/lists/*
 
-# Add init scripts while setting permissions
+# Allow the postgres user to run a few root commands without password
+# (Your original path looked truncated; let's fix the filename)
+RUN echo "postgres ALL=(root) NOPASSWD: /usr/bin/mkdir, /bin/chown, /usr/bin/openssl" > /etc/sudoers.d/postgres-nopasswd \
+ && chmod 440 /etc/sudoers.d/postgres-nopasswd
+
+# Add init scripts (run only on first boot of an empty data dir)
+# Your SSL init & wrapper
 COPY --chmod=755 init-ssl.sh /docker-entrypoint-initdb.d/init-ssl.sh
-COPY --chmod=755 wrapper.sh /usr/local/bin/wrapper.sh
+COPY --chmod=755 wrapper.sh   /usr/local/bin/wrapper.sh
 
-# Switch back to the postgres
+# Add extension auto-enable script
+COPY --chmod=644 init/001_extensions.sql /docker-entrypoint-initdb.d/001_extensions.sql
+
+# (Optional) Add more init SQL (policies, schemas, etc.)
+# COPY --chmod=644 init/010_timescale.sql /docker-entrypoint-initdb.d/010_timescale.sql
+
+# Healthcheck helps Railway know when PG is ready
+HEALTHCHECK --interval=10s --timeout=5s --retries=6 CMD pg_isready -U "${POSTGRES_USER:-postgres}" || exit 1
+
+# Back to postgres user
 USER postgres
 
-# Override the ENTRYPOINT with a wrapper script
+# Use wrapper entrypoint (as you had)
 ENTRYPOINT ["wrapper.sh"]
 
-# Start postgres listening on port 5432
+# Expose and start
 CMD ["postgres", "--port=5432"]

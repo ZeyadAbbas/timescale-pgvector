@@ -12,6 +12,7 @@ RUN echo "postgres ALL=(root) NOPASSWD: /usr/bin/mkdir, /bin/chown, /usr/bin/ope
 # Add init scripts while setting permissions
 COPY --chmod=755 init-ssl.sh /docker-entrypoint-initdb.d/init-ssl.sh
 COPY --chmod=755 wrapper.sh /usr/local/bin/wrapper.sh
+COPY --chmod=644 init/001_extensions.sql /docker-entrypoint-initdb.d/001_extensions.sql
 
 # Switch back to the postgres
 USER postgres
